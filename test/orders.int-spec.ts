@@ -11,6 +11,7 @@ describe('orders', () => {
   const post = (body: unknown) =>
     request(app.getHttpServer())
       .post('/orders')
+      .set('Idempotency-Key', crypto.randomUUID())
       .send(body as object);
   const stockOf = async (id: number) =>
     (await db.select().from(products).where(eq(products.id, id)))[0].stock;
@@ -71,7 +72,7 @@ describe('orders', () => {
       ),
     );
 
-    const statuses = results.map((r) => r.status).sort();
+    const statuses = results.map((r) => r.status);
     expect(statuses.filter((s) => s === 201)).toHaveLength(1);
     expect(statuses.filter((s) => s === 409)).toHaveLength(19);
     expect(await stockOf(id)).toBe(0);

@@ -3,6 +3,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -75,4 +76,18 @@ export const orderItems = pgTable(
     primaryKey({ columns: [t.orderId, t.productId] }),
     check('order_items_quantity_positive', sql`${t.quantity} > 0`),
   ],
+);
+
+export const idempotencyKeys = pgTable(
+  'idempotency_keys',
+  {
+    key: text('key').notNull(),
+    // Scoping by endpoint lets clients reuse one key generator across endpoints.
+    endpoint: text('endpoint').notNull(),
+    requestHash: text('request_hash').notNull(),
+    responseStatus: integer('response_status'),
+    responseBody: jsonb('response_body'),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.endpoint] })],
 );

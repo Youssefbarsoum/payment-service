@@ -6,8 +6,12 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { DB, type Db } from '../db/db.module.js';
+import { IdempotencyKey } from '../idempotency/idempotency-key.decorator.js';
+import { sendIdempotent, withIdempotency } from '../idempotency/idempotency.js';
 import { CreateOrderDto } from './orders.dto.js';
 import { OrdersService } from './orders.service.js';
 
@@ -19,8 +23,17 @@ export class OrdersController {
   ) {}
 
   @Post()
-  create(@Body() dto: CreateOrderDto) {
-    return this.db.transaction((tx) => this.orders.createInTx(tx, dto));
+  async create(
+    @IdempotencyKey() key: string,
+    @Body() dto: CreateOrderDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await withIdempotency(
+      this.db,
+      { key, endpoint: 'POST /orders', body: dto, status: 201 },
+      (tx) => this.orders.createInTx(tx, dto),
+    );
+    return sendIdempotent(res, result);
   }
 
   @Get(':id')
