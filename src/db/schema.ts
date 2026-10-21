@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import {
+  bigserial,
   check,
   index,
   integer,
@@ -90,4 +91,51 @@ export const idempotencyKeys = pgTable(
     createdAt: createdAt(),
   },
   (t) => [primaryKey({ columns: [t.key, t.endpoint] })],
+);
+
+/** Every Stripe event we accepted; the primary key is the dedupe guard. */
+export const webhookEvents = pgTable('webhook_events', {
+  stripeEventId: text('stripe_event_id').primaryKey(),
+  type: text('type').notNull(),
+  payload: jsonb('payload').notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  processedAt: timestamp('processed_at', { withTimezone: true }),
+});
+
+/** Audit trail: one row per payment outcome Stripe reported. */
+export const payments = pgTable('payments', {
+  id: serial('id').primaryKey(),
+  orderId: uuid('order_id')
+    .notNull()
+    .references(() => orders.id),
+  stripePaymentIntentId: text('stripe_payment_intent_id').notNull(),
+  stripeEventId: text('stripe_event_id').notNull().unique(),
+  amountCents: integer('amount_cents').notNull(),
+  currency: text('currency').notNull(),
+  status: text('status', { enum: ['succeeded', 'failed'] }).notNull(),
+  createdAt: createdAt(),
+});
+
+/**
+ * Transactional outbox: written in the same transaction as the state change it
+ * describes, then relayed to the job queue. If the transaction commits, the
+ * event exists; if it rolls back, the event never happened.
+ */
+export const outbox = pgTable(
+  'outbox',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    eventType: text('event_type').notNull(),
+    aggregateId: text('aggregate_id').notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: createdAt(),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('outbox_unpublished_idx')
+      .on(t.id)
+      .where(sql`${t.publishedAt} is null`),
+  ],
 );

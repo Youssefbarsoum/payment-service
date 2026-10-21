@@ -20,7 +20,7 @@ export async function createTestApp(): Promise<{
     .overrideProvider(STRIPE)
     .useValue(stripe)
     .compile();
-  const app = moduleRef.createNestApplication({ rawBody: true });
+  const app = moduleRef.createNestApplication({ rawBody: true, logger: false });
   setupApp(app);
   await app.init();
   return { app, db: app.get<Db>(DB), stripe };
