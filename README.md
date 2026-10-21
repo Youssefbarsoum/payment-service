@@ -160,7 +160,7 @@ curl -X POST localhost:3000/orders/<id>/refunds \
   -H "x-api-key: $ADMIN_API_KEY" -H "Idempotency-Key: $(uuidgen)"
 ```
 
-**Development mode** (infra in Docker, app on the host):
+**Development mode** (infra in Docker, app on the host; `.env` is loaded automatically. Stop the Docker app first with `docker compose --profile app stop api worker`, since both use port 3000):
 
 ```bash
 docker compose up -d              # postgres :5434, redis :6379, mailpit :1026/:8026
