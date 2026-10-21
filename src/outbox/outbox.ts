@@ -8,7 +8,8 @@ export type OutboxEvent =
   | 'payment.failed'
   | 'refund.requested'
   | 'order.refunded'
-  | 'order.expired';
+  | 'order.expired'
+  | 'order.fulfillment_requested';
 
 /** Which background jobs each event triggers. order.expired is recorded for audit only. */
 export const EVENT_JOBS: Record<OutboxEvent, JobName[]> = {
@@ -17,6 +18,8 @@ export const EVENT_JOBS: Record<OutboxEvent, JobName[]> = {
   'refund.requested': ['stripe-refund'],
   'order.refunded': ['email-refund-confirmation'],
   'order.expired': [],
+  // Re-queued fulfillment: after a failed refund, or a paid order whose job was lost.
+  'order.fulfillment_requested': ['fulfill-order'],
 };
 
 /**

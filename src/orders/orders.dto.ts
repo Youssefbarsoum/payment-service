@@ -16,6 +16,7 @@ export class OrderItemDto {
   @ApiProperty({ example: 1 })
   @IsInt()
   @Min(1)
+  @Max(2_147_483_647) // Postgres integer range: larger ids would be a 500, not a 400
   productId: number;
 
   @ApiProperty({ minimum: 1, maximum: 10, example: 1 })

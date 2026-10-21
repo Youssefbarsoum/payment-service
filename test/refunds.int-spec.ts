@@ -214,19 +214,38 @@ describe('refunds', () => {
       await requestRefund().expect(202);
     });
 
-    it('a refund job that exhausts its retries marks the refund failed and restores the order', async () => {
+    it('a refund job that exhausts its retries keeps the refund requested (outcome unknown, not failed)', async () => {
       await payOrder(app, stripe, order);
       const { body } = await requestRefund().expect(202);
 
-      await worker.get(JobsProcessor).onFailed({
+      worker.get(JobsProcessor).onFailed({
         name: 'stripe-refund',
         data: { orderId: order.id, refundId: body.refundId },
         attemptsMade: 5,
         opts: { attempts: 5 },
       } as Job<JobData>);
 
-      expect((await refundRows())[0].status).toBe('failed');
+      // Exhausted retries only mean Stripe was unreachable. The maintenance
+      // sweep re-queues the refund (see maintenance.int-spec).
+      expect((await refundRows())[0].status).toBe('requested');
+      expect(await statusOf()).toBe('refund_pending');
+    });
+
+    it('a failed refund on a not-yet-fulfilled order re-queues its fulfillment', async () => {
+      await payOrder(app, stripe, order);
+      const { body } = await requestRefund().expect(202);
+
+      await postWebhook(
+        server,
+        refundEvent('refund.failed', {
+          id: 're_1',
+          status: 'failed',
+          refundId: body.refundId,
+        }),
+      ).expect(200);
+
       expect(await statusOf()).toBe('paid');
+      expect(await outboxTypes()).toContain('order.fulfillment_requested');
     });
 
     it('a refund event without our metadata is acknowledged and ignored', async () => {

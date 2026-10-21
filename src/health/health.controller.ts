@@ -10,6 +10,7 @@ import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../db/db.module.js';
 import { JOBS_QUEUE } from '../queue/jobs.js';
+import { withTimeout } from '../timeout.js';
 
 const up = () => 'up' as const;
 const down = () => 'down' as const;
@@ -27,7 +28,7 @@ export class HealthController {
     const [db, redis] = await Promise.all([
       this.db.execute(sql`select 1`).then(up, down),
       // A cheap queue command proves the Redis round-trip the jobs depend on.
-      this.queue.count().then(up, down),
+      withTimeout(this.queue.count(), 2000, 'redis check').then(up, down),
     ]);
     const status = db === 'up' && redis === 'up' ? 'ok' : 'error';
     if (status !== 'ok') {

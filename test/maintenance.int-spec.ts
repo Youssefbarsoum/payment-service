@@ -15,6 +15,7 @@ import {
   MaintenanceService,
 } from '../src/maintenance/maintenance.service.js';
 import type { OrderView } from '../src/orders/orders.service.js';
+import { RefundsService } from '../src/refunds/refunds.service.js';
 import type { FakeStripe } from './fake-stripe.js';
 import {
   createOrder,
@@ -148,6 +149,53 @@ describe('maintenance', () => {
       expect(await db.select().from(refunds)).toMatchObject([
         { reason: 'late_payment', amountCents: order.totalCents },
       ]);
+    });
+  });
+
+  describe('stale work recovery (jobs lost or exhausted in Redis)', () => {
+    const tenMinutesLater = () => new Date(Date.now() + 11 * 60_000);
+    const outboxTypes = async () =>
+      (await db.select().from(outbox)).map((r) => r.eventType);
+
+    it('re-queues a refund stuck in requested, which then completes at Stripe', async () => {
+      const piId = await attachIntent();
+      stripe.setIntentStatus(piId, 'succeeded');
+      await db.update(orders).set({ status: 'expired' });
+      await postWebhook(
+        app.getHttpServer(),
+        piEvent('payment_intent.succeeded', {
+          id: piId,
+          amount: order.totalCents,
+          orderId: order.id,
+        }),
+      ).expect(200);
+      await db.delete(outbox); // the original job is gone (exhausted or lost)
+
+      await maintenance.retryStaleWork(tenMinutesLater());
+
+      expect(await outboxTypes()).toEqual(['refund.requested']);
+      const [refund] = await db.select().from(refunds);
+      await worker.get(RefundsService).submitToStripe(refund.id);
+      expect((await db.select().from(refunds))[0].status).toBe('succeeded');
+    });
+
+    it('re-queues fulfillment for an order stuck in paid', async () => {
+      await db.update(orders).set({ status: 'paid' });
+
+      await maintenance.retryStaleWork(tenMinutesLater());
+
+      expect(await outboxTypes()).toEqual(['order.fulfillment_requested']);
+    });
+
+    it('leaves recent work alone and does not re-queue twice in a row', async () => {
+      await db.update(orders).set({ status: 'paid' });
+
+      await maintenance.retryStaleWork(new Date());
+      expect(await outboxTypes()).toEqual([]);
+
+      await maintenance.retryStaleWork(tenMinutesLater());
+      await maintenance.retryStaleWork(new Date(Date.now() + 60_000));
+      expect(await outboxTypes()).toEqual(['order.fulfillment_requested']);
     });
   });
 

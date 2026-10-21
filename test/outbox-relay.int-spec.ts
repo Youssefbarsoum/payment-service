@@ -70,6 +70,20 @@ describe('outbox relay', () => {
     expect(await queuedJobs()).toHaveLength(2);
   });
 
+  it('fails fast instead of hanging when Redis does not answer, leaving rows unpublished', async () => {
+    await write('order.paid', 'order-1');
+    const hang = vi
+      .spyOn(queue, 'addBulk')
+      .mockReturnValue(new Promise(() => {}));
+
+    await expect(relay.relayOnce()).rejects.toThrow(/timed out/);
+
+    hang.mockRestore();
+    expect(
+      await db.select().from(outbox).where(isNull(outbox.publishedAt)),
+    ).toHaveLength(1);
+  });
+
   it('two relays running at once publish each row exactly once', async () => {
     for (let i = 0; i < 20; i++) await write('order.paid', `order-${i}`);
 

@@ -49,18 +49,24 @@ export class JobsProcessor extends WorkerHost {
   }
 
   /**
-   * After the last attempt, a refund job must not leave its order stuck in
-   * refund_pending: mark the refund failed and restore the order.
+   * Exhausted retries are logged, never turned into a business outcome: they
+   * only prove Stripe or SMTP was unreachable for a while, not that a refund
+   * failed. Stuck work is re-queued from Postgres by
+   * MaintenanceService.retryStaleWork, and the job stays in the failed set
+   * for inspection.
    */
   @OnWorkerEvent('failed')
-  async onFailed(job: Job<JobData>): Promise<void> {
+  onFailed(job: Job<JobData>): void {
     const exhausted = job.attemptsMade >= (job.opts.attempts ?? 1);
     this.logger.error(
-      { jobId: job.id, name: job.name, attempts: job.attemptsMade, exhausted },
+      {
+        jobId: job.id,
+        name: job.name,
+        orderId: job.data.orderId,
+        attempts: job.attemptsMade,
+        exhausted,
+      },
       job.failedReason ?? 'job failed',
     );
-    if (exhausted && job.name === 'stripe-refund') {
-      await this.refunds.applyRefundOutcome(job.data.refundId!, 'failed');
-    }
   }
 }

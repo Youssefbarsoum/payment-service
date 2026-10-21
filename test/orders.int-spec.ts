@@ -100,6 +100,13 @@ describe('orders', () => {
     expect(await stockOf(b)).toBe(10);
   });
 
+  it('400 (not 500) for a productId beyond the integer range', async () => {
+    await post({
+      email: 'a@b.co',
+      items: [{ productId: 2_147_483_648, quantity: 1 }],
+    }).expect(400);
+  });
+
   it.each([
     [
       'invalid email',

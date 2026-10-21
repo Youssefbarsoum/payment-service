@@ -12,6 +12,7 @@ import {
   idempotencyKeys,
   orders,
   outbox,
+  refunds,
   webhookEvents,
 } from '../db/schema.js';
 import { casOrderStatus } from '../orders/order-status.js';
@@ -25,6 +26,8 @@ const RETENTION_MS = 7 * 24 * 3600_000;
 const SWEEP_INTERVAL_MS = 30_000;
 const PRUNE_INTERVAL_MS = 3600_000;
 const BATCH_SIZE = 100;
+/** Fulfillment takes seconds and refunds settle quickly; anything older than this is stuck. */
+const STALE_WORK_MS = 10 * 60_000;
 
 @Injectable()
 export class MaintenanceService
@@ -42,12 +45,59 @@ export class MaintenanceService
     if (!backgroundLoopsEnabled()) return;
     this.stops.push(
       runEvery(SWEEP_INTERVAL_MS, () => this.sweepExpiredOrders(), this.logger),
+      runEvery(SWEEP_INTERVAL_MS, () => this.retryStaleWork(), this.logger),
       runEvery(PRUNE_INTERVAL_MS, () => this.pruneOldRecords(), this.logger),
     );
   }
 
   onModuleDestroy() {
     this.stops.forEach((stop) => stop());
+  }
+
+  /**
+   * Re-queues work that should have finished by now, from Postgres. This
+   * covers jobs that exhausted their retries during an outage and jobs lost
+   * with Redis data:
+   * - refunds still `requested` (safe: Stripe idempotency key refund-<id>);
+   * - orders still `paid` (safe: fulfillment is a compare-and-set).
+   * Bumping updated_at in the same UPDATE makes concurrent sweepers skip rows
+   * another one just claimed, and spaces out the next retry.
+   */
+  async retryStaleWork(now = new Date()): Promise<void> {
+    const cutoff = new Date(now.getTime() - STALE_WORK_MS);
+    await this.db.transaction(async (tx) => {
+      const staleRefunds = await tx
+        .update(refunds)
+        .set({ updatedAt: sql`now()` })
+        .where(
+          and(eq(refunds.status, 'requested'), lt(refunds.updatedAt, cutoff)),
+        )
+        .returning({ id: refunds.id, orderId: refunds.orderId });
+      for (const r of staleRefunds) {
+        await enqueueOutbox(tx, 'refund.requested', r.orderId, {
+          orderId: r.orderId,
+          refundId: r.id,
+        });
+      }
+
+      const staleOrders = await tx
+        .update(orders)
+        .set({ updatedAt: sql`now()` })
+        .where(and(eq(orders.status, 'paid'), lt(orders.updatedAt, cutoff)))
+        .returning({ id: orders.id });
+      for (const o of staleOrders) {
+        await enqueueOutbox(tx, 'order.fulfillment_requested', o.id, {
+          orderId: o.id,
+        });
+      }
+
+      if (staleRefunds.length + staleOrders.length > 0) {
+        this.logger.warn(
+          { refunds: staleRefunds.length, orders: staleOrders.length },
+          're-queued stale work',
+        );
+      }
+    });
   }
 
   /**

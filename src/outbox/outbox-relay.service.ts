@@ -12,10 +12,12 @@ import { DB, type Db } from '../db/db.module.js';
 import { outbox } from '../db/schema.js';
 import { JOBS_QUEUE, type JobData } from '../queue/jobs.js';
 import { backgroundLoopsEnabled, runEvery } from '../run-every.js';
+import { withTimeout } from '../timeout.js';
 import { EVENT_JOBS, type OutboxEvent } from './outbox.js';
 
 const BATCH_SIZE = 100;
 const INTERVAL_MS = 1000;
+const PUBLISH_TIMEOUT_MS = 5000;
 
 @Injectable()
 export class OutboxRelayService
@@ -68,9 +70,17 @@ export class OutboxRelayService
         })),
       );
       // The one network call made inside a transaction, on purpose: it only
-      // holds these outbox rows. If Redis is down this throws, nothing is
-      // marked published, and the next tick retries.
-      if (jobs.length > 0) await this.queue.addBulk(jobs);
+      // holds these outbox rows. The deadline matters because the Redis
+      // client queues commands forever while Redis is down. On timeout the
+      // transaction rolls back, nothing is marked published, the next tick
+      // retries, and commands that still reach Redis later are deduped by jobId.
+      if (jobs.length > 0) {
+        await withTimeout(
+          this.queue.addBulk(jobs),
+          PUBLISH_TIMEOUT_MS,
+          'publishing to Redis',
+        );
+      }
 
       await tx
         .update(outbox)

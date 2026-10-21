@@ -156,7 +156,7 @@ All jobs: 5 attempts, exponential backoff. Failed jobs are retained (DLQ) and in
 
 - **fulfill-order**: simulated work, then CAS `paid → fulfilled`. Idempotent via the CAS.
 - **email:\***: skip if a `sent_emails` row exists. Otherwise send, then insert the row. Email is **at-least-once**: a crash between send and insert can duplicate one email, and that's documented as accepted.
-- **stripe-refund**: if the refund row isn't `requested`, no-op. Call `refunds.create` with **Stripe idempotency key = refund id** and `metadata.refund_id`. Save stripe_refund_id. The final state comes from the webhook. If the job exhausts its attempts, the worker's final-failure handler applies the same "refund failed" transition as the webhook, so the order never sits in `refund_pending` for good.
+- **stripe-refund**: if the refund row isn't `requested`, no-op. Call `refunds.create` with **Stripe idempotency key = refund id** and `metadata.refund_id`. Save stripe_refund_id. The final state comes from the webhook. If the job exhausts its attempts, the refund stays `requested` (exhausted retries only prove Stripe was unreachable). A Postgres recovery sweep re-queues refunds stuck in `requested` and orders stuck in `paid` after 10 minutes. *(Revised after the final code review: marking it failed would have kept the money of an automatic refund.)*
 
 ### 8.5.1 Order expiry sweeper (worker process, every 30s)
 

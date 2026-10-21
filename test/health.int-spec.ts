@@ -1,6 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { createTestApp } from './helpers.js';
+import { createTestApp, jobsQueue } from './helpers.js';
 
 describe('GET /health', () => {
   let app: INestApplication;
@@ -25,5 +25,17 @@ describe('GET /health', () => {
   it('generates a request id when none is sent', async () => {
     const res = await request(app.getHttpServer()).get('/health');
     expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('503 instead of hanging when Redis does not answer', async () => {
+    const queue = jobsQueue(app);
+    const hang = vi
+      .spyOn(queue, 'count')
+      .mockReturnValue(new Promise(() => {}));
+
+    const res = await request(app.getHttpServer()).get('/health').expect(503);
+
+    hang.mockRestore();
+    expect(res.body).toMatchObject({ db: 'up', redis: 'down' });
   });
 });

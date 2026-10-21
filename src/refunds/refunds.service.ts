@@ -190,12 +190,22 @@ export class RefundsService {
           });
         }
       } else {
-        await casOrderStatus(
+        const restored = await casOrderStatus(
           tx,
           refund.orderId,
           ['refund_pending'],
           refund.previousOrderStatus!,
         );
+        // Its fulfillment job may have run (and skipped) while the refund was
+        // pending, so a restored paid order needs fulfilling again.
+        if (restored && refund.previousOrderStatus === 'paid') {
+          await enqueueOutbox(
+            tx,
+            'order.fulfillment_requested',
+            refund.orderId,
+            { orderId: refund.orderId },
+          );
+        }
       }
     };
     await (tx ? apply(tx) : this.db.transaction(apply));

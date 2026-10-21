@@ -14,7 +14,7 @@ It is built around the failure modes real payment systems hit: double-clicks and
 - **Transactional outbox** published to **BullMQ** with `FOR UPDATE SKIP LOCKED` and deterministic job ids.
 - **Retries with exponential backoff**, plus a dead-letter queue you can inspect and replay over an admin API.
 - **Refunds and expiry**: refunds are processed asynchronously. Unpaid orders expire and release their stock, and payments that land too late or for the wrong amount are refunded automatically.
-- **91 tests**, including concurrency tests. A load test sends 500 buyers at 50 items and confirms nothing is oversold.
+- **98 tests**, including concurrency tests. A load test sends 500 buyers at 50 items and confirms nothing is oversold.
 
 ---
 
@@ -44,7 +44,7 @@ flowchart LR
     M -- cancel PI --> S
 ```
 
-There's one codebase with two processes. **Postgres is the source of truth.** Redis only carries work and is never the only record of anything: if Redis loses its data, unpublished outbox rows are re-published, and order expiry is swept from Postgres.
+There's one codebase with two processes. **Postgres is the source of truth.** Redis only carries work. If Redis loses its data, every state that matters can be rebuilt from Postgres: unpublished outbox rows are re-published, order expiry is swept from Postgres, and refunds still `requested` and orders still `paid` are re-queued by a recovery sweep. Only an email whose job was lost after publishing would be skipped. Redis runs with AOF to make that rare.
 
 ## The payment flow
 
@@ -105,7 +105,7 @@ The order status describes the order, and **the refund row describes the money**
 | The user double-clicks "Pay", or the client retries after a timeout | Idempotency key: the duplicate blocks on the PK, then gets the stored response | `idempotency.int-spec` |
 | Same key, different body | `422 idempotency_key_mismatch` | `idempotency.int-spec` |
 | Crash between Stripe creating the PaymentIntent and our DB write | Stripe idempotency key `pi-<orderId>` returns the same PI | `payment-intents.int-spec` |
-| Stripe is down when paying | `502`, order unchanged, retry is safe | `payment-intents.int-spec` |
+| Stripe is unreachable when paying | `502`, order unchanged, retry reuses the same Stripe idempotency key (Stripe replays a stored *error* for 24h, so a request Stripe executed and then failed keeps failing; a connection error is retried cleanly) | `payment-intents.int-spec` |
 | Webhook delivered twice (or 5× concurrently) | `webhook_events` PK, deduped in the same transaction | `webhooks.int-spec` |
 | Webhooks out of order (failed after succeeded) | Compare-and-set ignores stale events | `webhooks.int-spec` |
 | Forged or tampered webhook | Signature check over the raw body | `webhooks.int-spec` |
@@ -113,15 +113,17 @@ The order status describes the order, and **the refund row describes the money**
 | Crash after commit, before enqueueing the job | The outbox row is still unpublished, and the relay picks it up | `outbox-relay.int-spec` |
 | Crash after enqueueing, before marking published | Deterministic `jobId` dedupe + idempotent consumers | `outbox-relay.int-spec` |
 | Two API instances relaying at once | `FOR UPDATE SKIP LOCKED` | `outbox-relay.int-spec` |
-| SMTP or Stripe down while a job runs | 5 attempts with exponential backoff, then the failed set (DLQ) | `queue-retries.int-spec` |
+| SMTP or Stripe down while a job runs | 5 attempts with exponential backoff, then the failed set (DLQ). Exhausted retries never become a business outcome: the work is re-queued from Postgres after 10 min | `queue-retries.int-spec` |
 | A job is retried after a partial run | Emails are deduped by job id; fulfillment is a CAS | `jobs.int-spec` |
 | Admin clicks "refund" 5 times | Row lock + partial unique index: one live refund per order | `refunds.int-spec` |
-| Refund fails at Stripe, or the job exhausts its retries | Refund marked failed, order restored, admin can retry | `refunds.int-spec` |
+| Stripe reports a refund as failed | Refund marked failed, order restored (re-queuing fulfillment if it was paid), admin can retry |
+| The refund job exhausts its retries (Stripe outage) | Refund stays `requested`; the recovery sweep re-queues it with the same Stripe idempotency key | `refunds.int-spec` |
 | Refund webhook arrives before we saved the Stripe refund id | Matched by `metadata.refund_id` | `refunds.int-spec` |
 | Payment amount doesn't match the order | Not marked paid; refunded automatically | `refunds.int-spec` |
 | Order expires while the customer is paying | Sweeper cancels the PI first; waits up to 1h for a processing payment | `maintenance.int-spec` |
 | Payment lands after the order expired | Refunded automatically (`late_payment`) | `maintenance.int-spec` |
-| Redis loses its data | Expiry is driven by Postgres; Redis runs with AOF | design |
+| Redis loses its data | Expiry and stale-work recovery are driven by Postgres; Redis runs with AOF | `maintenance.int-spec` |
+| Redis hangs (down, not refusing) | Relay and health check use deadlines: the relay rolls back and retries, `/health` returns 503 | `outbox-relay.int-spec`, `health.int-spec` |
 
 ## Design decisions and trade-offs
 
@@ -129,7 +131,8 @@ The order status describes the order, and **the refund row describes the money**
 - **At-least-once, with idempotent consumers.** Exactly-once delivery isn't something a queue can promise, so every consumer is safe to run twice. **Emails are the one accepted exception**: a crash between the SMTP send and recording it re-sends one email. Recording before sending could lose the email instead, which is worse.
 - **Failed requests aren't stored under their idempotency key.** An `out_of_stock` response rolls back with everything else, so retrying the same key later can succeed. Stripe stores errors too; for a shop, retryable is friendlier.
 - **Job-id dedupe has a window.** BullMQ keeps completed jobs for 7 days. Beyond that window, consumer idempotency is the guarantee.
-- **Refunds return `202` and run in the worker.** A Stripe outage delays a refund but never loses it.
+- **Refunds return `202` and run in the worker.** A Stripe outage delays a refund but doesn't lose it: exhausted retries leave it `requested`, and a Postgres sweep re-queues it. Only Stripe saying "failed" marks it failed.
+- **A duplicate idempotent request waits rather than fails.** It holds a DB connection while blocked on the first request's key. That is fine for normal retries; a retry storm on one slow key could tie up the pool, and returning `409 in progress` via `lock_timeout` (as Stripe does) is the next step.
 - **Why BullMQ, not RabbitMQ or Kafka?** The need is background jobs with retries, backoff and a DLQ inside one service, and BullMQ gives all of that on Redis. If order events had to fan out to other teams' services, I'd publish from the same outbox to Kafka. Only the relay would change.
 - **Plain modules, not hexagonal layers.** Transactions are visible in the code where they happen. Shared rules (`casOrderStatus`, `enqueueOutbox`, `withIdempotency`) are small functions that take a transaction.
 
@@ -173,7 +176,7 @@ npm run start:worker:dev          # worker, second terminal
 docker compose up -d && npm test     # DEBUG_NEST=1 npm test also prints server-side errors
 ```
 
-There are 91 tests across 14 files. They run against real Postgres and Redis, because mocked databases can't show race conditions. Stripe is replaced at the SDK boundary by an in-memory fake that mimics its idempotency and error behavior, and webhooks are signed with the real SDK. CI runs lint, build and the full suite on every push.
+There are 98 tests across 14 files. They run against real Postgres and Redis, because mocked databases can't show race conditions. Stripe is replaced at the SDK boundary by an in-memory fake that mimics its idempotency and error behavior, and webhooks are signed with the real SDK. CI runs lint, build and the full suite on every push.
 
 **Load check** (stack running): `npm run load-test`
 
