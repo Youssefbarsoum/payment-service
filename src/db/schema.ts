@@ -11,6 +11,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 
@@ -152,3 +153,44 @@ export const sentEmails = pgTable('sent_emails', {
   kind: text('kind').notNull(),
   sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const refundStatus = pgEnum('refund_status', [
+  'requested',
+  'succeeded',
+  'failed',
+]);
+export const refundReason = pgEnum('refund_reason', [
+  'admin',
+  'late_payment',
+  'amount_mismatch',
+]);
+
+/**
+ * The refund row describes the money; the order status describes the order.
+ * Its id doubles as the Stripe idempotency key for the refund call.
+ */
+export const refunds = pgTable(
+  'refunds',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id),
+    stripePaymentIntentId: text('stripe_payment_intent_id').notNull(),
+    amountCents: integer('amount_cents').notNull(),
+    reason: refundReason('reason').notNull(),
+    status: refundStatus('status').notNull().default('requested'),
+    // Admin refunds only: where the order goes back to if the refund fails.
+    previousOrderStatus: orderStatus('previous_order_status'),
+    stripeRefundId: text('stripe_refund_id').unique(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // At most one live refund per order: money can never go back twice, but a
+    // failed refund can be retried.
+    uniqueIndex('refunds_one_active_per_order')
+      .on(t.orderId)
+      .where(sql`${t.status} in ('requested', 'succeeded')`),
+  ],
+);

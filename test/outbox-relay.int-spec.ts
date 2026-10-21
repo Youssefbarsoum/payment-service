@@ -39,7 +39,7 @@ describe('outbox relay', () => {
     expect(await relay.relayOnce()).toBe(2);
 
     const jobs = await queuedJobs();
-    expect(jobs.map((j) => j.id).sort()).toEqual([
+    expect(jobs.map((j) => j.id).sort((a, b) => a!.localeCompare(b!))).toEqual([
       '1-email-order-confirmation',
       '1-fulfill-order',
       '2-stripe-refund',

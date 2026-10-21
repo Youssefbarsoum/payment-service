@@ -15,6 +15,7 @@ import type { OrderView } from '../src/orders/orders.service.js';
 import { STRIPE } from '../src/payments/stripe.module.js';
 import { setupApp } from '../src/setup-app.js';
 import { FakeStripe } from './fake-stripe.js';
+import { piEvent, postWebhook } from './webhooks.js';
 
 export async function createTestApp(): Promise<{
   app: INestApplication;
@@ -95,4 +96,30 @@ export async function createOrder(
     .send({ email: 'buyer@example.com', items: [{ productId, quantity }] })
     .expect(201);
   return res.body as OrderView;
+}
+
+/**
+ * Takes an order through the real payment path: PaymentIntent endpoint, the
+ * customer paying at Stripe, then the signed payment_intent.succeeded webhook.
+ */
+export async function payOrder(
+  app: INestApplication,
+  stripe: FakeStripe,
+  order: OrderView,
+): Promise<string> {
+  const server = app.getHttpServer();
+  const res = await request(server)
+    .post(`/orders/${order.id}/payment-intent`)
+    .expect(200);
+  const piId: string = res.body.paymentIntentId;
+  stripe.setIntentStatus(piId, 'succeeded');
+  await postWebhook(
+    server,
+    piEvent('payment_intent.succeeded', {
+      id: piId,
+      amount: order.totalCents,
+      orderId: order.id,
+    }),
+  ).expect(200);
+  return piId;
 }

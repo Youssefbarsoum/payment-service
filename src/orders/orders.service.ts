@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { and, asc, eq, gte, sql } from 'drizzle-orm';
 import { DB, type Db, type Tx } from '../db/db.module.js';
-import { orderItems, orders, products } from '../db/schema.js';
+import { orderItems, orders, products, refunds } from '../db/schema.js';
 import type { CreateOrderDto } from './orders.dto.js';
 import type { OrderStatus } from './order-status.js';
 
@@ -20,6 +20,12 @@ export interface OrderView {
   currency: string;
   expiresAt: string;
   items: { productId: number; quantity: number; unitPriceCents: number }[];
+  refunds: {
+    id: string;
+    status: 'requested' | 'succeeded' | 'failed';
+    reason: 'admin' | 'late_payment' | 'amount_mismatch';
+    amountCents: number;
+  }[];
 }
 
 @Injectable()
@@ -101,13 +107,24 @@ export class OrdersService {
       .from(orderItems)
       .where(eq(orderItems.orderId, id))
       .orderBy(asc(orderItems.productId));
-    return toView(order, lines);
+    const orderRefunds = await this.db
+      .select({
+        id: refunds.id,
+        status: refunds.status,
+        reason: refunds.reason,
+        amountCents: refunds.amountCents,
+      })
+      .from(refunds)
+      .where(eq(refunds.orderId, id))
+      .orderBy(asc(refunds.createdAt));
+    return toView(order, lines, orderRefunds);
   }
 }
 
 function toView(
   order: typeof orders.$inferSelect,
   items: OrderView['items'],
+  orderRefunds: OrderView['refunds'] = [],
 ): OrderView {
   return {
     id: order.id,
@@ -117,5 +134,6 @@ function toView(
     currency: order.currency,
     expiresAt: order.expiresAt.toISOString(),
     items,
+    refunds: orderRefunds,
   };
 }
