@@ -1,5 +1,11 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, INestApplicationContext } from '@nestjs/common';
+import { getQueueToken } from '@nestjs/bullmq';
 import { Test } from '@nestjs/testing';
+import type { Queue } from 'bullmq';
+import type { Mock } from 'vitest';
+import { MAIL_TRANSPORT } from '../src/email/email.service.js';
+import { JOBS_QUEUE } from '../src/queue/jobs.js';
+import { WorkerModule } from '../src/worker.module.js';
 import { sql } from 'drizzle-orm';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
@@ -20,7 +26,10 @@ export async function createTestApp(): Promise<{
     .overrideProvider(STRIPE)
     .useValue(stripe)
     .compile();
-  const app = moduleRef.createNestApplication({ rawBody: true, logger: false });
+  const app = moduleRef.createNestApplication({
+    rawBody: true,
+    logger: false,
+  });
   setupApp(app);
   await app.init();
   return { app, db: app.get<Db>(DB), stripe };
@@ -44,6 +53,34 @@ export async function seedProduct(
     .values({ ...p, name: p.name ?? `product-${crypto.randomUUID()}` })
     .returning({ id: products.id });
   return row.id;
+}
+
+/** Boots the worker process's module graph with Stripe and SMTP faked. */
+export async function createTestWorker(stripe = new FakeStripe()): Promise<{
+  worker: INestApplicationContext;
+  db: Db;
+  stripe: FakeStripe;
+  mail: { sendMail: Mock };
+}> {
+  const mail = { sendMail: vi.fn().mockResolvedValue({}) };
+  const moduleRef = await Test.createTestingModule({ imports: [WorkerModule] })
+    .overrideProvider(STRIPE)
+    .useValue(stripe)
+    .overrideProvider(MAIL_TRANSPORT)
+    .useValue(mail)
+    .compile();
+  // A TestingModule is itself an application context; init() runs lifecycle hooks.
+  moduleRef.useLogger(false);
+  await moduleRef.init();
+  return { worker: moduleRef, db: moduleRef.get<Db>(DB), stripe, mail };
+}
+
+export function jobsQueue(app: INestApplicationContext): Queue {
+  return app.get<Queue>(getQueueToken(JOBS_QUEUE));
+}
+
+export async function resetQueue(queue: Queue): Promise<void> {
+  await queue.obliterate({ force: true });
 }
 
 /** Creates an order through the API, as a client would. */

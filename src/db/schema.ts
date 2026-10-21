@@ -139,3 +139,16 @@ export const outbox = pgTable(
       .where(sql`${t.publishedAt} is null`),
   ],
 );
+
+/**
+ * Emails already sent, keyed by the job id that sent them, so a retried or
+ * re-published job doesn't email the customer twice.
+ */
+export const sentEmails = pgTable('sent_emails', {
+  dedupeKey: text('dedupe_key').primaryKey(),
+  orderId: uuid('order_id')
+    .notNull()
+    .references(() => orders.id),
+  kind: text('kind').notNull(),
+  sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+});

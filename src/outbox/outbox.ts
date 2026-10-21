@@ -1,5 +1,6 @@
 import type { Tx } from '../db/db.module.js';
 import { outbox } from '../db/schema.js';
+import type { JobName } from '../queue/jobs.js';
 import { requestContext } from '../request-context.js';
 
 export type OutboxEvent =
@@ -8,6 +9,15 @@ export type OutboxEvent =
   | 'refund.requested'
   | 'order.refunded'
   | 'order.expired';
+
+/** Which background jobs each event triggers. order.expired is recorded for audit only. */
+export const EVENT_JOBS: Record<OutboxEvent, JobName[]> = {
+  'order.paid': ['fulfill-order', 'email-order-confirmation'],
+  'payment.failed': ['email-payment-failed'],
+  'refund.requested': ['stripe-refund'],
+  'order.refunded': ['email-refund-confirmation'],
+  'order.expired': [],
+};
 
 /**
  * Records an event in the caller's transaction. Never call a queue or an

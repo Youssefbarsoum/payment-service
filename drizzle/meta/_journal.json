@@ -29,6 +29,13 @@
       "when": 1792614265797,
       "tag": "0003_webhooks_payments_outbox",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792614562693,
+      "tag": "0004_sent_emails",
+      "breakpoints": true
     }
   ]
 }
