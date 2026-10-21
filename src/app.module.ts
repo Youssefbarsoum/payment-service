@@ -4,6 +4,8 @@ import { ConfigModule } from './config.module.js';
 import { DbModule } from './db/db.module.js';
 import { HealthModule } from './health/health.module.js';
 import { loggerOptions } from './logger.js';
+import { OrdersModule } from './orders/orders.module.js';
+import { ProductsModule } from './products/products.module.js';
 import { requestContextMiddleware } from './request-context.js';
 
 @Module({
@@ -12,6 +14,8 @@ import { requestContextMiddleware } from './request-context.js';
     LoggerModule.forRoot(loggerOptions()),
     DbModule,
     HealthModule,
+    ProductsModule,
+    OrdersModule,
   ],
 })
 export class AppModule implements NestModule {
