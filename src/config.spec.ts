@@ -24,6 +24,15 @@ describe('loadConfig', () => {
     expect(config.SMTP_PORT).toBe(1025);
   });
 
+  it('rejects the placeholder values from .env.example', () => {
+    expect(() =>
+      loadConfig({ ...validEnv(), STRIPE_SECRET_KEY: 'sk_test_replace_me' }),
+    ).toThrow(/STRIPE_SECRET_KEY/);
+    expect(() =>
+      loadConfig({ ...validEnv(), STRIPE_WEBHOOK_SECRET: 'whsec_replace_me' }),
+    ).toThrow(/STRIPE_WEBHOOK_SECRET/);
+  });
+
   it('coerces PORT from its string env value', () => {
     expect(loadConfig({ ...validEnv(), PORT: '8080' }).PORT).toBe(8080);
   });

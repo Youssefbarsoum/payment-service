@@ -120,18 +120,32 @@ export class FakeStripe {
     if (status === 'succeeded') intent.amount_received = intent.amount;
   }
 
-  /** The next `times` calls to `method` fail like a network outage. */
-  failNext(method: Method, times = 1): void {
+  /**
+   * The next `times` calls to `method` fail: like a network outage by default,
+   * or with an invalid API key (`'auth'`), which retrying can't fix.
+   */
+  failNext(
+    method: Method,
+    times = 1,
+    kind: 'network' | 'auth' = 'network',
+  ): void {
     this.failures[method] = times;
+    this.failureKind = kind;
   }
+
+  private failureKind: 'network' | 'auth' = 'network';
 
   private enter(method: Method): void {
     this.calls[method] = (this.calls[method] ?? 0) + 1;
     if ((this.failures[method] ?? 0) > 0) {
       this.failures[method]! -= 1;
-      throw new Stripe.errors.StripeConnectionError({
-        message: 'An error occurred with our connection to Stripe',
-      });
+      throw this.failureKind === 'auth'
+        ? new Stripe.errors.StripeAuthenticationError({
+            message: 'Invalid API Key provided: sk_test_****',
+          })
+        : new Stripe.errors.StripeConnectionError({
+            message: 'An error occurred with our connection to Stripe',
+          });
     }
   }
 

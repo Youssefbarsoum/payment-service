@@ -5,8 +5,11 @@ import {
   IsInt,
   IsNotEmpty,
   IsString,
+  NotContains,
   validateSync,
 } from 'class-validator';
+
+const PLACEHOLDER = 'replace_me';
 
 export class Env {
   @IsIn(['development', 'production', 'test'])
@@ -18,10 +21,18 @@ export class Env {
 
   @IsString() @IsNotEmpty() DATABASE_URL: string;
   @IsString() @IsNotEmpty() REDIS_URL: string;
-  @IsString() @IsNotEmpty() STRIPE_SECRET_KEY: string;
-  @IsString() @IsNotEmpty() STRIPE_PUBLISHABLE_KEY: string;
-  @IsString() @IsNotEmpty() STRIPE_WEBHOOK_SECRET: string;
-  @IsString() @IsNotEmpty() ADMIN_API_KEY: string;
+  // NotContains: refuse to start with the placeholders from .env.example,
+  // instead of failing later at checkout with a confusing Stripe error.
+  @IsString() @IsNotEmpty() @NotContains(PLACEHOLDER) STRIPE_SECRET_KEY: string;
+  @IsString()
+  @IsNotEmpty()
+  @NotContains(PLACEHOLDER)
+  STRIPE_PUBLISHABLE_KEY: string;
+  @IsString()
+  @IsNotEmpty()
+  @NotContains(PLACEHOLDER)
+  STRIPE_WEBHOOK_SECRET: string;
+  @IsString() @IsNotEmpty() @NotContains(PLACEHOLDER) ADMIN_API_KEY: string;
   @IsString() @IsNotEmpty() SMTP_HOST: string;
   @IsInt() SMTP_PORT: number;
   @IsString() @IsNotEmpty() MAIL_FROM: string;

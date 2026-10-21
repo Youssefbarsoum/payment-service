@@ -3,6 +3,8 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
@@ -19,6 +21,8 @@ const notPayable = () =>
 
 @Injectable()
 export class PaymentIntentsService {
+  private readonly logger = new Logger(PaymentIntentsService.name);
+
   constructor(
     @Inject(DB) private readonly db: Db,
     @Inject(STRIPE) private readonly stripe: Stripe,
@@ -88,10 +92,25 @@ export class PaymentIntentsService {
       return await fn();
     } catch (err) {
       if (err instanceof Stripe.errors.StripeError) {
-        throw new BadGatewayException({
-          code: 'payment_provider_unavailable',
-          message: 'The payment provider is unavailable, please retry',
-        });
+        // Only outages are worth retrying. A rejection (bad API key, invalid
+        // request) is our problem, so say so and log Stripe's reason.
+        const transient =
+          err instanceof Stripe.errors.StripeConnectionError ||
+          err instanceof Stripe.errors.StripeAPIError ||
+          err instanceof Stripe.errors.StripeRateLimitError;
+        this.logger[transient ? 'warn' : 'error'](
+          { type: err.type, code: err.code, message: err.message },
+          'Stripe call failed',
+        );
+        throw transient
+          ? new BadGatewayException({
+              code: 'payment_provider_unavailable',
+              message: 'The payment provider is unavailable, please retry',
+            })
+          : new InternalServerErrorException({
+              code: 'payment_provider_error',
+              message: 'The payment provider rejected the request',
+            });
       }
       throw err;
     }

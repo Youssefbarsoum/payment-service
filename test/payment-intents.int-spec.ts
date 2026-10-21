@@ -100,6 +100,16 @@ describe('POST /orders/:id/payment-intent', () => {
     );
   });
 
+  it('a Stripe rejection (e.g. invalid API key) is a 500, not "unavailable, please retry"', async () => {
+    const order = await createOrder(app, productId);
+    stripe.failNext('paymentIntents.create', 1, 'auth');
+
+    const res = await start(order.id).expect(500);
+
+    expect(res.body.code).toBe('payment_provider_error');
+    expect((await orderRow(order.id)).stripePaymentIntentId).toBeNull();
+  });
+
   it('400 for a non-uuid id, 404 for an unknown order', async () => {
     await start('nope').expect(400);
     await start(crypto.randomUUID()).expect(404);
