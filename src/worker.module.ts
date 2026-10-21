@@ -4,6 +4,7 @@ import { ConfigModule } from './config.module.js';
 import { DbModule } from './db/db.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { loggerOptions } from './logger.js';
+import { MaintenanceModule } from './maintenance/maintenance.module.js';
 import { StripeModule } from './payments/stripe.module.js';
 
 /** The worker process: BullMQ job processors and background maintenance. */
@@ -14,6 +15,7 @@ import { StripeModule } from './payments/stripe.module.js';
     DbModule,
     StripeModule,
     JobsModule,
+    MaintenanceModule,
   ],
 })
 export class WorkerModule {}

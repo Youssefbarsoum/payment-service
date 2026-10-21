@@ -44,7 +44,7 @@ export class JobsProcessor extends WorkerHost {
       case 'stripe-refund':
         return this.refunds.submitToStripe(job.data.refundId!);
       default:
-        throw new Error(`Unknown job: ${job.name}`);
+        throw new Error(`Unknown job: ${String(job.name)}`);
     }
   }
 
