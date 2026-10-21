@@ -1,3 +1,4 @@
+import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -12,10 +13,12 @@ import {
 } from 'class-validator';
 
 export class OrderItemDto {
+  @ApiProperty({ example: 1 })
   @IsInt()
   @Min(1)
   productId: number;
 
+  @ApiProperty({ minimum: 1, maximum: 10, example: 1 })
   @IsInt()
   @Min(1)
   @Max(10)
@@ -23,9 +26,11 @@ export class OrderItemDto {
 }
 
 export class CreateOrderDto {
+  @ApiProperty({ example: 'buyer@example.com' })
   @IsEmail()
   email: string;
 
+  @ApiProperty({ type: [OrderItemDto], minItems: 1, maxItems: 20 })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(20)

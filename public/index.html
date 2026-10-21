@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Checkout</title>
+    <!-- Card details go straight from the browser to Stripe; this service never sees them. -->
+    <script src="https://js.stripe.com/v3/"></script>
+    <style>
+      :root { color-scheme: light dark; --accent: #635bff; --muted: #6b7280; }
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; }
+      h1 { font-size: 1.4rem; }
+      label { display: block; margin: 12px 0 4px; font-weight: 600; }
+      input, select, button { width: 100%; box-sizing: border-box; padding: 10px; font: inherit; border-radius: 6px; border: 1px solid #d1d5db; }
+      button { margin-top: 16px; background: var(--accent); color: #fff; border: 0; cursor: pointer; }
+      button:disabled { opacity: 0.6; cursor: wait; }
+      #payment { margin-top: 16px; }
+      #status { margin-top: 16px; padding: 12px; border-radius: 6px; background: rgba(99, 91, 255, 0.1); white-space: pre-wrap; }
+      small { color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <h1>Test checkout</h1>
+    <small>Stripe test mode. Pay with 4242 4242 4242 4242, any future date and any CVC. 4000 0000 0000 0002 declines.</small>
+
+    <form id="order-form">
+      <label for="product">Product</label>
+      <select id="product" required></select>
+      <label for="email">Email</label>
+      <input id="email" type="email" value="buyer@example.com" required />
+      <button id="order-btn" type="submit">Create order</button>
+    </form>
+
+    <form id="pay-form" hidden>
+      <div id="payment"></div>
+      <button id="pay-btn" type="submit">Pay</button>
+    </form>
+
+    <div id="status" hidden></div>
+
+    <script type="module">
+      const $ = (id) => document.getElementById(id);
+      const show = (text) => { $('status').hidden = false; $('status').textContent = text; };
+      const api = async (path, options = {}) => {
+        const res = await fetch(path, { ...options, headers: { 'content-type': 'application/json', ...options.headers } });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(`${res.status} ${body.code ?? ''} ${body.message ?? ''}`);
+        return body;
+      };
+
+      const { publishableKey } = await api('/checkout-config');
+      const stripe = Stripe(publishableKey);
+      const products = await api('/products');
+      $('product').innerHTML = products
+        .map((p) => `<option value="${p.id}">${p.name} — $${(p.priceCents / 100).toFixed(2)} (${p.stock} left)</option>`)
+        .join('');
+
+      // One key per checkout attempt: a double click or a retry after a timeout
+      // replays the same order instead of creating a second one.
+      const idempotencyKey = crypto.randomUUID();
+      let order, elements;
+
+      $('order-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        $('order-btn').disabled = true;
+        try {
+          order = await api('/orders', {
+            method: 'POST',
+            headers: { 'Idempotency-Key': idempotencyKey },
+            body: JSON.stringify({ email: $('email').value, items: [{ productId: Number($('product').value), quantity: 1 }] }),
+          });
+          const { clientSecret } = await api(`/orders/${order.id}/payment-intent`, { method: 'POST' });
+          elements = stripe.elements({ clientSecret });
+          elements.create('payment').mount('#payment');
+          $('order-form').hidden = true;
+          $('pay-form').hidden = false;
+          show(`Order ${order.id.slice(0, 8)} reserved until ${new Date(order.expiresAt).toLocaleTimeString()}`);
+        } catch (err) {
+          show(err.message);
+          $('order-btn').disabled = false;
+        }
+      });
+
+      $('pay-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        $('pay-btn').disabled = true;
+        const { error } = await stripe.confirmPayment({ elements, redirect: 'if_required' });
+        if (error) {
+          show(error.message);
+          $('pay-btn').disabled = false;
+          return;
+        }
+        // The browser says "paid", but only the webhook is trusted to mark the order paid.
+        show('Payment submitted, waiting for the webhook…');
+        for (let i = 0; i < 30; i++) {
+          const current = await api(`/orders/${order.id}`);
+          if (current.status !== 'pending_payment') {
+            show(`Order ${order.id.slice(0, 8)}: ${current.status}`);
+            if (current.status === 'paid') continue; // keep polling until fulfilled
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+      });
+    </script>
+  </body>
+</html>

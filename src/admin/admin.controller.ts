@@ -9,11 +9,14 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { Queue } from 'bullmq';
 import { JOBS_QUEUE } from '../queue/jobs.js';
 import { AdminGuard } from './admin.guard.js';
 
 /** The dead-letter queue: jobs that exhausted their retries, for inspection and manual replay. */
+@ApiTags('admin')
+@ApiSecurity('admin')
 @Controller('admin/jobs')
 @UseGuards(AdminGuard)
 export class AdminController {

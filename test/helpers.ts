@@ -1,4 +1,5 @@
 import { INestApplication, INestApplicationContext } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { getQueueToken } from '@nestjs/bullmq';
 import { Test } from '@nestjs/testing';
 import type { Queue } from 'bullmq';
@@ -27,9 +28,10 @@ export async function createTestApp(): Promise<{
     .overrideProvider(STRIPE)
     .useValue(stripe)
     .compile();
-  const app = moduleRef.createNestApplication({
+  const app = moduleRef.createNestApplication<NestExpressApplication>({
     rawBody: true,
-    logger: false,
+    // DEBUG_NEST=1 npm test shows server-side errors behind unexpected 500s.
+    logger: process.env.DEBUG_NEST ? ['error'] : false,
   });
   setupApp(app);
   await app.init();

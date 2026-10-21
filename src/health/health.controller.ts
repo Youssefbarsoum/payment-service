@@ -5,6 +5,7 @@ import {
   Inject,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import type { Queue } from 'bullmq';
 import { sql } from 'drizzle-orm';
 import { DB, type Db } from '../db/db.module.js';
@@ -13,6 +14,7 @@ import { JOBS_QUEUE } from '../queue/jobs.js';
 const up = () => 'up' as const;
 const down = () => 'down' as const;
 
+@ApiTags('ops')
 @Controller('health')
 export class HealthController {
   constructor(

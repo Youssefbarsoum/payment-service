@@ -8,12 +8,14 @@ import {
   Req,
   type RawBodyRequest,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import Stripe from 'stripe';
 import { CONFIG, type Env } from '../config.js';
 import { STRIPE } from './stripe.module.js';
 import { WebhookHandlerService } from './webhook-handler.service.js';
 
+@ApiTags('webhooks')
 @Controller('webhooks')
 export class WebhooksController {
   constructor(

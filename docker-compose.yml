@@ -31,6 +31,34 @@ services:
     image: axllent/mailpit:latest
     ports: ['1026:1025', '8026:8025']
 
+  # The app itself: docker compose --profile app up --build
+  api:
+    profiles: [app]
+    build: .
+    env_file: [{ path: .env, required: false }]
+    environment: &app-env
+      NODE_ENV: production
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/payments
+      REDIS_URL: redis://redis:6379/0
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+    command: sh -c 'node dist/db/migrate.js && node dist/db/seed.js && node dist/main.js'
+    ports: ['3000:3000']
+    depends_on: &app-deps
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      mailpit: { condition: service_started }
+
+  worker:
+    profiles: [app]
+    build: .
+    env_file: [{ path: .env, required: false }]
+    environment: *app-env
+    command: node dist/worker.js
+    depends_on:
+      <<: *app-deps
+      api: { condition: service_started }
+
 volumes:
   pgdata:
   redisdata:
