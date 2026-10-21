@@ -151,7 +151,7 @@ docker compose --profile app up --build
 | http://localhost:3000/docs | Swagger / OpenAPI |
 | http://localhost:8026 | Mailpit inbox (order emails land here) |
 
-**Real Stripe webhooks:** run `stripe listen --forward-to localhost:3000/webhooks/stripe`, put the printed `whsec_…` in `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the api. Pay with `4242 4242 4242 4242` (succeeds) or `4000 0000 0000 0002` (declined, which sends a payment-failed email).
+**Real Stripe webhooks:** run `stripe listen --forward-to localhost:3000/webhooks/stripe --events payment_intent.succeeded,payment_intent.payment_failed,refund.created,refund.updated,refund.failed` (newer CLI versions require `--events`; these are the events the app handles), put the printed `whsec_…` in `.env` as `STRIPE_WEBHOOK_SECRET`, then restart the api. Pay with `4242 4242 4242 4242` (succeeds) or `4000 0000 0000 0002` (declined, which sends a payment-failed email).
 
 **Refund an order** (admin):
 
