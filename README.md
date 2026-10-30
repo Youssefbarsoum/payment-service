@@ -62,10 +62,10 @@ sequenceDiagram
     A->>DB: txn: insert key, reserve stock, insert order, store response
     A-->>C: 201 order (pending_payment, expires in 15 min)
     C->>A: POST /orders/:id/payment-intent
-    A->>S: create PI (idempotency key pi-<orderId>)
+    A->>S: create PI (idempotency key pi-#lt;orderId#gt;)
     A->>DB: attach PI id (CAS: still pending, not expired)
     A-->>C: client_secret
-    C->>S: confirm card (Stripe.js; card data never touches us)
+    C->>S: confirm card (Stripe.js, card data never touches us)
     S->>A: webhook payment_intent.succeeded (signed)
     A->>DB: txn: dedupe event, CAS pending_payment→paid, outbox order.paid
     A-->>S: 200
